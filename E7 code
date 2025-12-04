@@ -1,0 +1,140 @@
+import numpy as np
+import math
+
+class PurePythonLogisticRegression:
+    """Logistic Regression implemented in pure Python (no numpy)"""
+    
+    def __init__(self, learning_rate=0.01, iterations=1000):
+        self.learning_rate = learning_rate
+        self.iterations = iterations
+        self.weights = []
+        self.bias = 0
+        self.loss_history = []
+    
+    def sigmoid(self, z):
+        """Sigmoid function"""
+        # Prevent overflow
+        if z > 100:
+            return 1.0
+        elif z < -100:
+            return 0.0
+        return 1.0 / (1.0 + math.exp(-z))
+    
+    def fit(self, X, y):
+        """Train the model"""
+        n_samples = len(X)
+        n_features = len(X[0])
+        
+        # Initialize weights
+        self.weights = [0.0] * n_features
+        self.bias = 0.0
+        
+        for iteration in range(self.iterations):
+            total_loss = 0.0
+            grad_weights = [0.0] * n_features
+            grad_bias = 0.0
+            
+            for i in range(n_samples):
+                # Calculate linear combination
+                z = self.bias
+                for j in range(n_features):
+                    z += self.weights[j] * X[i][j]
+                
+                # Sigmoid activation
+                y_pred = self.sigmoid(z)
+                
+                # Calculate loss
+                if y[i] == 1:
+                    loss = -math.log(y_pred + 1e-10)
+                else:
+                    loss = -math.log(1 - y_pred + 1e-10)
+                total_loss += loss
+                
+                # Calculate gradients
+                error = y_pred - y[i]
+                grad_bias += error
+                
+                for j in range(n_features):
+                    grad_weights[j] += error * X[i][j]
+            
+            # Average gradients
+            avg_loss = total_loss / n_samples
+            self.loss_history.append(avg_loss)
+            
+            grad_bias /= n_samples
+            for j in range(n_features):
+                grad_weights[j] /= n_samples
+            
+            # Update parameters
+            self.bias -= self.learning_rate * grad_bias
+            for j in range(n_features):
+                self.weights[j] -= self.learning_rate * grad_weights[j]
+            
+            # Print progress
+            if iteration % 100 == 0:
+                # Calculate accuracy
+                correct = 0
+                for i in range(n_samples):
+                    z = self.bias
+                    for j in range(n_features):
+                        z += self.weights[j] * X[i][j]
+                    y_pred = self.sigmoid(z)
+                    if (y_pred >= 0.5 and y[i] == 1) or (y_pred < 0.5 and y[i] == 0):
+                        correct += 1
+                accuracy = correct / n_samples
+                print(f"Iteration {iteration}: Loss = {avg_loss:.4f}, Accuracy = {accuracy:.4f}")
+    
+    def predict(self, X):
+        """Make predictions"""
+        predictions = []
+        
+        for sample in X:
+            z = self.bias
+            for j in range(len(sample)):
+                z += self.weights[j] * sample[j]
+            
+            y_pred = self.sigmoid(z)
+            predictions.append(1 if y_pred >= 0.5 else 0)
+        
+        return predictions
+    
+    def predict_proba(self, X):
+        """Predict probabilities"""
+        probabilities = []
+        
+        for sample in X:
+            z = self.bias
+            for j in range(len(sample)):
+                z += self.weights[j] * sample[j]
+            
+            probabilities.append(self.sigmoid(z))
+        
+        return probabilities
+
+# Quick test
+if __name__ == "__main__":
+    print("PURE PYTHON LOGISTIC REGRESSION")
+    print("=" * 50)
+    
+    # Simple OR gate dataset
+    X_or = [[0, 0], [0, 1], [1, 0], [1, 1]]
+    y_or = [0, 1, 1, 1]
+    
+    # Create and train model
+    model = PurePythonLogisticRegression(learning_rate=0.1, iterations=500)
+    model.fit(X_or, y_or)
+    
+    # Test predictions
+    print("\nTesting OR Gate:")
+    print("-" * 40)
+    predictions = model.predict(X_or)
+    probabilities = model.predict_proba(X_or)
+    
+    for i in range(len(X_or)):
+        print(f"Input: {X_or[i]}, Expected: {y_or[i]}, "
+              f"Predicted: {predictions[i]}, Probability: {probabilities[i]:.4f}")
+    
+    # Calculate accuracy
+    correct = sum(1 for i in range(len(y_or)) if predictions[i] == y_or[i])
+    accuracy = correct / len(y_or)
+    print(f"\nAccuracy: {accuracy:.4f} ({correct}/{len(y_or)} correct)")
