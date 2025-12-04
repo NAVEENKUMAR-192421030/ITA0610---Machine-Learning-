@@ -1,0 +1,57 @@
+import numpy as np
+from collections import Counter
+
+class MiniKNN:
+    def __init__(self, k=3):
+        self.k = k
+        self.X_train = None
+        self.y_train = None
+    
+    def fit(self, X, y):
+        self.X_train = X
+        self.y_train = y
+    
+    def predict(self, X):
+        predictions = []
+        for x in X:
+            distances = []
+            for i, train_point in enumerate(self.X_train):
+                dist = np.sqrt(np.sum((np.array(x) - np.array(train_point)) ** 2))
+                distances.append((dist, self.y_train[i]))
+            
+            distances.sort(key=lambda x: x[0])
+            k_nearest = distances[:self.k]
+            k_labels = [label for _, label in k_nearest]
+            
+            # Majority vote
+            prediction = max(set(k_labels), key=k_labels.count)
+            predictions.append(prediction)
+        
+        return predictions
+
+# Demo
+if __name__ == "__main__":
+    # Simple example
+    knn = MiniKNN(k=3)
+    
+    # Training data: [height, weight] -> sport (0: basketball, 1: gymnastics)
+    X_train = [[190, 85], [180, 75], [195, 90],  # basketball players
+               [160, 50], [155, 45], [165, 55]]  # gymnasts
+    y_train = [0, 0, 0, 1, 1, 1]
+    
+    # Test data
+    X_test = [[185, 80], [170, 60]]
+    
+    knn.fit(X_train, y_train)
+    predictions = knn.predict(X_test)
+    
+    print("K-Nearest Neighbors Demo")
+    print("Training data:")
+    for i, (features, label) in enumerate(zip(X_train, y_train)):
+        sport = "Basketball" if label == 0 else "Gymnastics"
+        print(f"  Player {i+1}: {features} -> {sport}")
+    
+    print("\nPredictions:")
+    for i, (features, pred) in enumerate(zip(X_test, predictions)):
+        sport = "Basketball" if pred == 0 else "Gymnastics"
+        print(f"  Test {i+1}: {features} -> {sport}")
