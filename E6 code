@@ -1,0 +1,198 @@
+import numpy as np
+from collections import defaultdict
+
+class SimpleNaiveBayes:
+    def __init__(self):
+        self.class_probs = {}
+        self.feature_probs = {}
+    
+    def fit(self, X, y):
+        X = np.array(X)
+        y = np.array(y)
+        
+        # Class probabilities
+        unique_classes, class_counts = np.unique(y, return_counts=True)
+        total_samples = len(y)
+        
+        for cls, count in zip(unique_classes, class_counts):
+            self.class_probs[cls] = count / total_samples
+        
+        # Feature probabilities with Laplace smoothing
+        n_features = X.shape[1]
+        self.feature_probs = defaultdict(lambda: defaultdict(dict))
+        
+        for cls in unique_classes:
+            # Get indices of samples with this class
+            cls_indices = np.where(y == cls)[0]
+            X_cls = X[cls_indices]
+            
+            for feature_idx in range(n_features):
+                feature_values = X_cls[:, feature_idx]
+                unique_vals, counts = np.unique(feature_values, return_counts=True)
+                
+                # All possible values for this feature
+                all_vals = np.unique(X[:, feature_idx])
+                
+                for val in all_vals:
+                    if val in unique_vals:
+                        count = counts[np.where(unique_vals == val)[0][0]]
+                    else:
+                        count = 0
+                    
+                    # Laplace smoothing
+                    prob = (count + 1) / (len(X_cls) + len(all_vals))
+                    self.feature_probs[cls][feature_idx][val] = prob
+    
+    def predict(self, X):
+        predictions = []
+        
+        for sample in X:
+            best_class = None
+            best_score = -np.inf
+            
+            for cls in self.class_probs:
+                score = np.log(self.class_probs[cls])
+                
+                for feature_idx, val in enumerate(sample):
+                    if val in self.feature_probs[cls][feature_idx]:
+                        score += np.log(self.feature_probs[cls][feature_idx][val])
+                    else:
+                        score += np.log(1e-10)  # Small probability for unseen values
+                
+                if score > best_score:
+                    best_score = score
+                    best_class = cls
+            
+            predictions.append(best_class)
+        
+        return predictions
+
+def display_results(y_true, y_pred, class_names=None):
+    """Display accuracy and confusion matrix"""
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    # Accuracy
+    accuracy = np.sum(y_true == y_pred) / len(y_true)
+    print(f"\nAccuracy: {accuracy:.4f} ({np.sum(y_true == y_pred)}/{len(y_true)} correct)")
+    
+    # Confusion matrix
+    unique_classes = np.unique(np.concatenate([y_true, y_pred]))
+    
+    if class_names is None:
+        class_names = [f"Class {c}" for c in unique_classes]
+    
+    cm = np.zeros((len(unique_classes), len(unique_classes)), dtype=int)
+    
+    for i, true_cls in enumerate(unique_classes):
+        for j, pred_cls in enumerate(unique_classes):
+            cm[i, j] = np.sum((y_true == true_cls) & (y_pred == pred_cls))
+    
+    print("\nConfusion Matrix:")
+    print(" " * 10, end="")
+    for name in class_names:
+        print(f"{name[:8]:>8}", end="")
+    print()
+    
+    for i, true_name in enumerate(class_names):
+        print(f"{true_name[:8]:>8} |", end="")
+        for j in range(len(class_names)):
+            print(f"{cm[i, j]:>8}", end="")
+        print()
+    
+    # Precision, Recall, F1-score
+    print("\nDetailed Metrics:")
+    print("-" * 40)
+    
+    for i, cls in enumerate(unique_classes):
+        true_pos = cm[i, i]
+        false_pos = np.sum(cm[:, i]) - true_pos
+        false_neg = np.sum(cm[i, :]) - true_pos
+        
+        precision = true_pos / (true_pos + false_pos) if (true_pos + false_pos) > 0 else 0
+        recall = true_pos / (true_pos + false_neg) if (true_pos + false_neg) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        
+        print(f"{class_names[i]}:")
+        print(f"  Precision: {precision:.4f}")
+        print(f"  Recall: {recall:.4f}")
+        print(f"  F1-Score: {f1:.4f}")
+
+# Example usage
+if __name__ == "__main__":
+    print("NAÏVE BAYES CLASSIFIER - MINIMAL VERSION")
+    print("=" * 50)
+    
+    # Weather dataset example
+    # Features: [Outlook, Temperature, Humidity, Windy]
+    # Outlook: 0=Sunny, 1=Overcast, 2=Rainy
+    # Temperature: 0=Hot, 1=Mild, 2=Cool
+    # Humidity: 0=High, 1=Normal
+    # Windy: 0=False, 1=True
+    # Play: 0=No, 1=Yes
+    
+    X_train = [
+        [0, 0, 0, 0],  # Sunny, Hot, High, Not Windy
+        [0, 0, 0, 1],  # Sunny, Hot, High, Windy
+        [1, 0, 0, 0],  # Overcast, Hot, High, Not Windy
+        [2, 1, 0, 0],  # Rainy, Mild, High, Not Windy
+        [2, 2, 1, 0],  # Rainy, Cool, Normal, Not Windy
+        [2, 2, 1, 1],  # Rainy, Cool, Normal, Windy
+        [1, 2, 1, 1],  # Overcast, Cool, Normal, Windy
+        [0, 1, 0, 0],  # Sunny, Mild, High, Not Windy
+        [0, 2, 1, 0],  # Sunny, Cool, Normal, Not Windy
+        [2, 1, 1, 0],  # Rainy, Mild, Normal, Not Windy
+        [0, 1, 1, 1],  # Sunny, Mild, Normal, Windy
+        [1, 1, 0, 1],  # Overcast, Mild, High, Windy
+        [1, 0, 1, 0],  # Overcast, Hot, Normal, Not Windy
+        [2, 1, 0, 1],  # Rainy, Mild, High, Windy
+    ]
+    
+    y_train = [0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0]  # 0=Don't Play, 1=Play
+    
+    # Test data
+    X_test = [
+        [0, 0, 1, 0],  # Sunny, Hot, Normal, Not Windy
+        [1, 1, 1, 0],  # Overcast, Mild, Normal, Not Windy
+        [2, 0, 0, 1],  # Rainy, Hot, High, Windy
+    ]
+    
+    y_test = [1, 1, 0]  # Expected predictions
+    
+    # Create and train classifier
+    print("\nTraining Naive Bayes classifier...")
+    nb = SimpleNaiveBayes()
+    nb.fit(X_train, y_train)
+    
+    # Make predictions
+    print("\nMaking predictions...")
+    predictions = nb.predict(X_test)
+    
+    # Display feature names for better understanding
+    feature_names = ["Outlook", "Temperature", "Humidity", "Windy"]
+    outlook_map = {0: "Sunny", 1: "Overcast", 2: "Rainy"}
+    temp_map = {0: "Hot", 1: "Mild", 2: "Cool"}
+    humidity_map = {0: "High", 1: "Normal"}
+    windy_map = {0: "No", 1: "Yes"}
+    
+    print("\nTest Data:")
+    for i, sample in enumerate(X_test):
+        outlook = outlook_map[sample[0]]
+        temp = temp_map[sample[1]]
+        humidity = humidity_map[sample[2]]
+        windy = windy_map[sample[3]]
+        prediction = "Play" if predictions[i] == 1 else "Don't Play"
+        expected = "Play" if y_test[i] == 1 else "Don't Play"
+        
+        print(f"  Day {i+1}: {outlook}, {temp}, {humidity} humidity, Windy: {windy}")
+        print(f"    Expected: {expected}")
+        print(f"    Predicted: {prediction}")
+    
+    # Display results
+    display_results(y_test, predictions, class_names=["Don't Play", "Play"])
+    
+    # Show class probabilities
+    print("\nClass Probabilities from training:")
+    for cls, prob in nb.class_probs.items():
+        class_name = "Play" if cls == 1 else "Don't Play"
+        print(f"  P({class_name}) = {prob:.4f}")
