@@ -1,0 +1,784 @@
+import numpy as np
+import pandas as pd
+from collections import Counter
+import math
+
+class CreditScoreClassifier:
+    """
+    Credit Score Classification System
+    Categories: Poor, Standard, Good
+    """
+    
+    def __init__(self, random_state=42):
+        self.random_state = random_state
+        np.random.seed(random_state)
+        
+        # Trained model parameters
+        self.tree = None
+        self.feature_importance = None
+        self.classes = None
+        
+    def generate_synthetic_data(self, n_samples=1000):
+        """
+        Generate synthetic credit score data
+        """
+        np.random.seed(self.random_state)
+        
+        # Features for credit scoring
+        data = {
+            'age': np.random.randint(18, 70, n_samples),
+            'annual_income': np.random.exponential(scale=50000, size=n_samples) + 20000,
+            'debt_to_income': np.random.beta(2, 5, n_samples) * 0.8 + 0.1,  # 10% to 90%
+            'credit_history_length': np.random.exponential(scale=5, size=n_samples) + 1,  # years
+            'num_credit_cards': np.random.poisson(lam=3, size=n_samples) + 1,
+            'missed_payments': np.random.poisson(lam=0.5, size=n_samples),
+            'credit_utilization': np.random.beta(2, 3, n_samples),  # 0 to 1
+            'loan_amount': np.random.exponential(scale=20000, size=n_samples) + 5000,
+            'employment_length': np.random.exponential(scale=3, size=n_samples),  # years
+            'savings_balance': np.random.exponential(scale=10000, size=n_samples),
+        }
+        
+        # Calculate credit score (0-850 scale)
+        df = pd.DataFrame(data)
+        
+        # Feature engineering for score calculation
+        df['income_factor'] = np.log1p(df['annual_income']) * 20
+        df['debt_factor'] = (1 - df['debt_to_income']) * 150
+        df['history_factor'] = np.sqrt(df['credit_history_length']) * 50
+        df['utilization_factor'] = (1 - df['credit_utilization']) * 100
+        df['payment_factor'] = np.exp(-df['missed_payments']) * 200
+        df['savings_factor'] = np.log1p(df['savings_balance']) * 10
+        
+        # Calculate raw score
+        raw_score = (
+            df['income_factor'] * 0.25 +
+            df['debt_factor'] * 0.20 +
+            df['history_factor'] * 0.15 +
+            df['utilization_factor'] * 0.15 +
+            df['payment_factor'] * 0.15 +
+            df['savings_factor'] * 0.10
+        )
+        
+        # Add some noise
+        raw_score += np.random.normal(0, 30, n_samples)
+        
+        # Clip to FICO range (300-850)
+        df['credit_score'] = np.clip(raw_score, 300, 850)
+        
+        # Create classification labels
+        def classify_score(score):
+            if score < 580:
+                return 'Poor'
+            elif score < 670:
+                return 'Fair'
+            elif score < 740:
+                return 'Good'
+            elif score < 800:
+                return 'Very Good'
+            else:
+                return 'Excellent'
+        
+        df['credit_class'] = df['credit_score'].apply(classify_score)
+        
+        # For binary/multi-class demonstration, combine some classes
+        df['target'] = df['credit_class'].apply(
+            lambda x: 'Poor' if x in ['Poor'] else 
+                     'Standard' if x in ['Fair', 'Good'] else 
+                     'Good'  # Very Good and Excellent
+        )
+        
+        return df.drop(['income_factor', 'debt_factor', 'history_factor', 
+                       'utilization_factor', 'payment_factor', 'savings_factor'], axis=1)
+    
+    def calculate_entropy(self, y):
+        """
+        Calculate entropy of a dataset
+        """
+        hist = np.bincount(y)
+        ps = hist / len(y)
+        return -np.sum([p * np.log2(p) for p in ps if p > 0])
+    
+    def calculate_information_gain(self, X_column, y, threshold):
+        """
+        Calculate information gain for a binary split
+        """
+        # Create masks
+        left_mask = X_column <= threshold
+        right_mask = X_column > threshold
+        
+        if len(y[left_mask]) == 0 or len(y[right_mask]) == 0:
+            return 0
+        
+        # Calculate parent entropy
+        parent_entropy = self.calculate_entropy(y)
+        
+        # Calculate weighted child entropy
+        n = len(y)
+        n_left, n_right = len(y[left_mask]), len(y[right_mask])
+        
+        if n_left == 0 or n_right == 0:
+            return 0
+        
+        left_entropy = self.calculate_entropy(y[left_mask])
+        right_entropy = self.calculate_entropy(y[right_mask])
+        
+        child_entropy = (n_left / n) * left_entropy + (n_right / n) * right_entropy
+        
+        return parent_entropy - child_entropy
+    
+    def find_best_split(self, X, y):
+        """
+        Find the best split for a node
+        """
+        best_gain = -1
+        best_feature = None
+        best_threshold = None
+        
+        n_features = X.shape[1]
+        
+        for feature_idx in range(n_features):
+            X_column = X[:, feature_idx]
+            thresholds = np.unique(X_column)
+            
+            for threshold in thresholds:
+                gain = self.calculate_information_gain(X_column, y, threshold)
+                
+                if gain > best_gain:
+                    best_gain = gain
+                    best_feature = feature_idx
+                    best_threshold = threshold
+        
+        return best_feature, best_threshold, best_gain
+    
+    class DecisionNode:
+        """Node in decision tree"""
+        def __init__(self, feature_idx=None, threshold=None, 
+                     left=None, right=None, value=None):
+            self.feature_idx = feature_idx
+            self.threshold = threshold
+            self.left = left
+            self.right = right
+            self.value = value  # For leaf nodes
+        
+        def is_leaf(self):
+            return self.value is not None
+    
+    def build_tree(self, X, y, depth=0, max_depth=5, min_samples_split=10):
+        """
+        Recursively build decision tree
+        """
+        n_samples, n_features = X.shape
+        
+        # Check stopping criteria
+        if (len(np.unique(y)) == 1 or 
+            n_samples < min_samples_split or 
+            depth >= max_depth):
+            leaf_value = self._most_common_label(y)
+            return self.DecisionNode(value=leaf_value)
+        
+        # Find best split
+        feature_idx, threshold, gain = self.find_best_split(X, y)
+        
+        if gain < 0.01:  # Minimum gain threshold
+            leaf_value = self._most_common_label(y)
+            return self.DecisionNode(value=leaf_value)
+        
+        # Split the data
+        left_mask = X[:, feature_idx] <= threshold
+        right_mask = X[:, feature_idx] > threshold
+        
+        # Recursively build left and right subtrees
+        left_subtree = self.build_tree(
+            X[left_mask], y[left_mask], depth + 1, max_depth, min_samples_split
+        )
+        right_subtree = self.build_tree(
+            X[right_mask], y[right_mask], depth + 1, max_depth, min_samples_split
+        )
+        
+        return self.DecisionNode(
+            feature_idx=feature_idx,
+            threshold=threshold,
+            left=left_subtree,
+            right=right_subtree
+        )
+    
+    def _most_common_label(self, y):
+        """Find most common label in array"""
+        counter = Counter(y)
+        return counter.most_common(1)[0][0]
+    
+    def _traverse_tree(self, x, node):
+        """Traverse tree for prediction"""
+        if node.is_leaf():
+            return node.value
+        
+        if x[node.feature_idx] <= node.threshold:
+            return self._traverse_tree(x, node.left)
+        else:
+            return self._traverse_tree(x, node.right)
+    
+    def fit(self, X, y, max_depth=5, min_samples_split=10):
+        """
+        Train the decision tree classifier
+        """
+        # Convert labels to numeric indices
+        self.classes_ = np.unique(y)
+        self.class_to_idx = {cls: idx for idx, cls in enumerate(self.classes_)}
+        self.idx_to_class = {idx: cls for idx, cls in enumerate(self.classes_)}
+        
+        y_numeric = np.array([self.class_to_idx[label] for label in y])
+        
+        # Build tree
+        self.tree = self.build_tree(
+            np.array(X), y_numeric, 
+            max_depth=max_depth, 
+            min_samples_split=min_samples_split
+        )
+        
+        # Calculate feature importance
+        self.feature_importance = self._calculate_feature_importance(
+            np.array(X), y_numeric
+        )
+        
+        return self
+    
+    def _calculate_feature_importance(self, X, y):
+        """
+        Calculate feature importance based on information gain
+        """
+        n_features = X.shape[1]
+        importance = np.zeros(n_features)
+        
+        for feature_idx in range(n_features):
+            X_column = X[:, feature_idx]
+            thresholds = np.unique(X_column)
+            
+            for threshold in thresholds:
+                gain = self.calculate_information_gain(X_column, y, threshold)
+                importance[feature_idx] = max(importance[feature_idx], gain)
+        
+        # Normalize importance
+        if importance.sum() > 0:
+            importance = importance / importance.sum()
+        
+        return importance
+    
+    def predict(self, X):
+        """
+        Predict credit score class
+        """
+        predictions = []
+        for x in X:
+            prediction_idx = self._traverse_tree(x, self.tree)
+            predictions.append(self.idx_to_class[prediction_idx])
+        return predictions
+    
+    def predict_proba(self, X):
+        """
+        Predict class probabilities (simplified version)
+        """
+        predictions = self.predict(X)
+        probas = []
+        
+        for pred in predictions:
+            proba = [0] * len(self.classes_)
+            idx = list(self.classes_).index(pred)
+            proba[idx] = 1.0
+            probas.append(proba)
+        
+        return np.array(probas)
+    
+    def evaluate(self, X_test, y_test):
+        """
+        Evaluate model performance
+        """
+        y_pred = self.predict(X_test)
+        
+        # Calculate accuracy
+        accuracy = np.mean(np.array(y_pred) == np.array(y_test))
+        
+        # Calculate confusion matrix
+        n_classes = len(self.classes_)
+        confusion_matrix = np.zeros((n_classes, n_classes), dtype=int)
+        
+        class_to_idx = {cls: idx for idx, cls in enumerate(self.classes_)}
+        
+        for true, pred in zip(y_test, y_pred):
+            true_idx = class_to_idx[true]
+            pred_idx = class_to_idx[pred]
+            confusion_matrix[true_idx][pred_idx] += 1
+        
+        # Calculate precision, recall, F1 for each class
+        metrics = {}
+        for i, cls in enumerate(self.classes_):
+            tp = confusion_matrix[i, i]
+            fp = confusion_matrix[:, i].sum() - tp
+            fn = confusion_matrix[i, :].sum() - tp
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+            
+            metrics[cls] = {
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1,
+                'support': confusion_matrix[i, :].sum()
+            }
+        
+        return {
+            'accuracy': accuracy,
+            'confusion_matrix': confusion_matrix,
+            'class_metrics': metrics
+        }
+
+class CreditScoreSystem:
+    """
+    Complete Credit Score Classification System
+    """
+    
+    def __init__(self):
+        self.classifier = CreditScoreClassifier()
+        self.feature_names = None
+        self.scalers = {}
+        
+    def prepare_data(self, df):
+        """
+        Prepare data for training
+        """
+        # Features for classification
+        features = [
+            'age', 'annual_income', 'debt_to_income', 
+            'credit_history_length', 'num_credit_cards',
+            'missed_payments', 'credit_utilization',
+            'loan_amount', 'employment_length', 'savings_balance'
+        ]
+        
+        X = df[features].values
+        y = df['target'].values
+        
+        self.feature_names = features
+        
+        return X, y
+    
+    def train_test_split(self, X, y, test_size=0.2, random_state=42):
+        """
+        Split data into train and test sets
+        """
+        np.random.seed(random_state)
+        n_samples = len(X)
+        indices = np.arange(n_samples)
+        np.random.shuffle(indices)
+        
+        test_samples = int(n_samples * test_size)
+        test_indices = indices[:test_samples]
+        train_indices = indices[test_samples:]
+        
+        X_train, X_test = X[train_indices], X[test_indices]
+        y_train, y_test = y[train_indices], y[test_indices]
+        
+        return X_train, X_test, y_train, y_test
+    
+    def train(self, X_train, y_train, max_depth=5):
+        """
+        Train the credit score classifier
+        """
+        print("Training Credit Score Classifier...")
+        print("-" * 50)
+        
+        self.classifier.fit(X_train, y_train, max_depth=max_depth)
+        
+        print("Training completed!")
+        print(f"Number of classes: {len(self.classifier.classes_)}")
+        print(f"Classes: {list(self.classifier.classes_)}")
+        
+        # Print feature importance
+        print("\nFeature Importance:")
+        print("-" * 30)
+        for i, (feature, importance) in enumerate(
+            zip(self.feature_names, self.classifier.feature_importance)
+        ):
+            print(f"{i+1:2d}. {feature:25s}: {importance:.4f}")
+    
+    def evaluate_model(self, X_test, y_test):
+        """
+        Evaluate model performance
+        """
+        print("\n" + "=" * 60)
+        print("MODEL EVALUATION")
+        print("=" * 60)
+        
+        results = self.classifier.evaluate(X_test, y_test)
+        
+        print(f"\nOverall Accuracy: {results['accuracy']:.4f} ({results['accuracy']*100:.2f}%)")
+        
+        print("\nConfusion Matrix:")
+        print("-" * 40)
+        classes = list(self.classifier.classes_)
+        print("True \\ Pred".ljust(15), end="")
+        for cls in classes:
+            print(f"{cls:>10}", end="")
+        print()
+        
+        for i, true_cls in enumerate(classes):
+            print(f"{true_cls:15}", end="")
+            for j, pred_cls in enumerate(classes):
+                print(f"{results['confusion_matrix'][i, j]:>10}", end="")
+            print()
+        
+        print("\nClassification Report:")
+        print("-" * 40)
+        print(f"{'Class':<15} {'Precision':<10} {'Recall':<10} {'F1-Score':<10} {'Support':<10}")
+        print("-" * 55)
+        
+        for cls in classes:
+            metrics = results['class_metrics'][cls]
+            print(f"{cls:<15} {metrics['precision']:<10.4f} {metrics['recall']:<10.4f} "
+                  f"{metrics['f1_score']:<10.4f} {metrics['support']:<10}")
+        
+        return results
+    
+    def predict_individual(self, features_dict):
+        """
+        Predict credit score for an individual
+        """
+        # Convert dictionary to feature array
+        features = []
+        for feature_name in self.feature_names:
+            features.append(features_dict[feature_name])
+        
+        # Make prediction
+        prediction = self.classifier.predict([features])[0]
+        probabilities = self.classifier.predict_proba([features])[0]
+        
+        # Calculate approximate credit score
+        score = self._estimate_score(features_dict)
+        
+        return {
+            'credit_class': prediction,
+            'estimated_score': score,
+            'probabilities': {
+                cls: prob for cls, prob in zip(self.classifier.classes_, probabilities)
+            },
+            'risk_factors': self._identify_risk_factors(features_dict)
+        }
+    
+    def _estimate_score(self, features):
+        """
+        Estimate credit score based on features
+        """
+        # Simplified scoring model
+        score = 650  # Base score
+        
+        # Adjust based on features
+        if features['annual_income'] > 60000:
+            score += 30
+        elif features['annual_income'] < 30000:
+            score -= 40
+        
+        if features['debt_to_income'] < 0.3:
+            score += 50
+        elif features['debt_to_income'] > 0.7:
+            score -= 60
+        
+        if features['credit_history_length'] > 7:
+            score += 40
+        elif features['credit_history_length'] < 2:
+            score -= 30
+        
+        if features['missed_payments'] == 0:
+            score += 35
+        elif features['missed_payments'] > 3:
+            score -= 50
+        
+        if features['credit_utilization'] < 0.3:
+            score += 25
+        elif features['credit_utilization'] > 0.8:
+            score -= 35
+        
+        # Clip to realistic range
+        return max(300, min(850, int(score)))
+    
+    def _identify_risk_factors(self, features):
+        """
+        Identify key risk factors for an individual
+        """
+        risk_factors = []
+        
+        if features['debt_to_income'] > 0.5:
+            risk_factors.append("High debt-to-income ratio")
+        
+        if features['missed_payments'] > 2:
+            risk_factors.append("Multiple missed payments")
+        
+        if features['credit_utilization'] > 0.7:
+            risk_factors.append("High credit utilization")
+        
+        if features['credit_history_length'] < 3:
+            risk_factors.append("Short credit history")
+        
+        if features['annual_income'] < 25000:
+            risk_factors.append("Low annual income")
+        
+        if not risk_factors:
+            risk_factors.append("No significant risk factors identified")
+        
+        return risk_factors
+    
+    def print_credit_score_guidelines(self):
+        """
+        Print credit score classification guidelines
+        """
+        print("\n" + "=" * 70)
+        print("CREDIT SCORE CLASSIFICATION GUIDELINES")
+        print("=" * 70)
+        
+        guidelines = {
+            'Poor (<580)': [
+                "• Very high risk to lenders",
+                "• May be denied credit or charged very high interest",
+                "• Need to rebuild credit history",
+                "• Consider secured credit cards"
+            ],
+            'Fair (580-669)': [
+                "• Subprime borrower",
+                "• May qualify for credit but with high interest",
+                "• Focus on reducing debt and making timely payments",
+                "• Avoid applying for too much new credit"
+            ],
+            'Good (670-739)': [
+                "• Acceptable to most lenders",
+                "• May qualify for better interest rates",
+                "• Maintain good payment history",
+                "• Keep credit utilization below 30%"
+            ],
+            'Very Good (740-799)': [
+                "• Low risk to lenders",
+                "• Qualify for better interest rates",
+                "• Maintain current good habits",
+                "• Consider optimizing credit mix"
+            ],
+            'Excellent (800-850)': [
+                "• Lowest risk to lenders",
+                "• Qualify for best interest rates",
+                "• Continue responsible credit management",
+                "• Monitor credit reports regularly"
+            ]
+        }
+        
+        for category, tips in guidelines.items():
+            print(f"\n{category}:")
+            for tip in tips:
+                print(f"  {tip}")
+
+def main():
+    """
+    Main function for Credit Score Classification System
+    """
+    print("=" * 70)
+    print("CREDIT SCORE CLASSIFICATION SYSTEM")
+    print("=" * 70)
+    print("Using Decision Tree Classifier\n")
+    
+    # Initialize system
+    system = CreditScoreSystem()
+    
+    # Step 1: Generate synthetic data
+    print("1. GENERATING SYNTHETIC CREDIT DATA")
+    print("-" * 50)
+    data = system.classifier.generate_synthetic_data(n_samples=2000)
+    
+    print(f"Generated {len(data)} customer records")
+    print("\nData Sample:")
+    print(data[['age', 'annual_income', 'credit_score', 'target']].head())
+    
+    # Data distribution
+    print(f"\nClass Distribution:")
+    class_counts = data['target'].value_counts()
+    for cls, count in class_counts.items():
+        percentage = (count / len(data)) * 100
+        print(f"  {cls}: {count} records ({percentage:.1f}%)")
+    
+    # Step 2: Prepare data
+    print("\n2. PREPARING DATA FOR TRAINING")
+    print("-" * 50)
+    X, y = system.prepare_data(data)
+    print(f"Features: {len(system.feature_names)}")
+    print(f"Target classes: {np.unique(y)}")
+    
+    # Step 3: Split data
+    print("\n3. SPLITTING DATA")
+    print("-" * 50)
+    X_train, X_test, y_train, y_test = system.train_test_split(
+        X, y, test_size=0.25, random_state=42
+    )
+    print(f"Training samples: {len(X_train)}")
+    print(f"Testing samples: {len(X_test)}")
+    
+    # Step 4: Train model
+    print("\n4. TRAINING THE MODEL")
+    print("-" * 50)
+    system.train(X_train, y_train, max_depth=5)
+    
+    # Step 5: Evaluate model
+    evaluation_results = system.evaluate_model(X_test, y_test)
+    
+    # Step 6: Make individual predictions
+    print("\n" + "=" * 70)
+    print("INDIVIDUAL CREDIT ASSESSMENTS")
+    print("=" * 70)
+    
+    # Example customers
+    example_customers = [
+        {
+            'name': 'John Doe',
+            'age': 35,
+            'annual_income': 45000,
+            'debt_to_income': 0.35,
+            'credit_history_length': 8,
+            'num_credit_cards': 3,
+            'missed_payments': 0,
+            'credit_utilization': 0.25,
+            'loan_amount': 15000,
+            'employment_length': 5,
+            'savings_balance': 8000
+        },
+        {
+            'name': 'Jane Smith',
+            'age': 28,
+            'annual_income': 32000,
+            'debt_to_income': 0.65,
+            'credit_history_length': 3,
+            'num_credit_cards': 5,
+            'missed_payments': 2,
+            'credit_utilization': 0.85,
+            'loan_amount': 25000,
+            'employment_length': 2,
+            'savings_balance': 1500
+        },
+        {
+            'name': 'Robert Johnson',
+            'age': 45,
+            'annual_income': 85000,
+            'debt_to_income': 0.20,
+            'credit_history_length': 15,
+            'num_credit_cards': 2,
+            'missed_payments': 0,
+            'credit_utilization': 0.15,
+            'loan_amount': 0,
+            'employment_length': 10,
+            'savings_balance': 50000
+        }
+    ]
+    
+    for customer in example_customers:
+        print(f"\n{'='*60}")
+        print(f"CUSTOMER: {customer['name']}")
+        print(f"{'='*60}")
+        
+        # Make prediction
+        result = system.predict_individual(customer)
+        
+        print(f"\nCredit Assessment:")
+        print(f"  • Credit Class: {result['credit_class']}")
+        print(f"  • Estimated Score: {result['estimated_score']}")
+        
+        print(f"\nClass Probabilities:")
+        for cls, prob in result['probabilities'].items():
+            print(f"  • {cls}: {prob:.2%}")
+        
+        print(f"\nKey Risk Factors:")
+        for factor in result['risk_factors']:
+            print(f"  • {factor}")
+        
+        # Recommendations
+        print(f"\nRecommendations:")
+        if result['credit_class'] == 'Poor':
+            print("  • Focus on paying down existing debt")
+            print("  • Make all payments on time")
+            print("  • Consider a secured credit card")
+            print("  • Avoid applying for new credit")
+        elif result['credit_class'] == 'Standard':
+            print("  • Reduce credit card balances")
+            print("  • Continue making timely payments")
+            print("  • Don't close old credit accounts")
+            print("  • Limit new credit applications")
+        else:  # Good
+            print("  • Maintain current good habits")
+            print("  • Keep credit utilization low")
+            print("  • Monitor credit reports annually")
+            print("  • Consider diversifying credit types")
+    
+    # Step 7: Print guidelines
+    system.print_credit_score_guidelines()
+    
+    # Step 8: Business insights
+    print("\n" + "=" * 70)
+    print("BUSINESS INSIGHTS & APPLICATIONS")
+    print("=" * 70)
+    
+    insights = [
+        "1. RISK MANAGEMENT:",
+        "   • Identify high-risk applicants automatically",
+        "   • Set appropriate interest rates based on risk",
+        "   • Reduce default rates through better screening",
+        
+        "\n2. CUSTOMER SEGMENTATION:",
+        "   • Tailor financial products to different segments",
+        "   • Design targeted marketing campaigns",
+        "   • Offer personalized credit improvement tips",
+        
+        "\n3. REGULATORY COMPLIANCE:",
+        "   • Ensure fair lending practices",
+        "   • Maintain transparency in credit decisions",
+        "   • Document decision-making process",
+        
+        "\n4. OPERATIONAL EFFICIENCY:",
+        "   • Automate credit assessment process",
+        "   • Reduce manual review time",
+        "   • Handle large volumes of applications",
+        
+        "\n5. CUSTOMER EXPERIENCE:",
+        "   • Provide instant credit decisions",
+        "   • Offer personalized recommendations",
+        "   • Transparent communication of factors"
+    ]
+    
+    for insight in insights:
+        print(insight)
+    
+    # Model limitations
+    print("\n" + "=" * 70)
+    print("MODEL LIMITATIONS & CONSIDERATIONS")
+    print("=" * 70)
+    
+    limitations = [
+        "⚠️  Uses synthetic data - Real data needed for production",
+        "⚠️  Simplified model - Real systems use more complex algorithms",
+        "⚠️  Limited features - Real credit scoring includes more factors",
+        "⚠️  No time-series analysis - Real credit history is dynamic",
+        "⚠️  Ethical considerations - Must avoid bias and discrimination",
+        "⚠️  Regulatory requirements - Must comply with financial regulations"
+    ]
+    
+    for limitation in limitations:
+        print(limitation)
+    
+    print("\n" + "=" * 70)
+    print("SYSTEM READY FOR CREDIT SCORE CLASSIFICATION")
+    print("=" * 70)
+
+# Run the program
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        print("\nThis program requires numpy and pandas to run.")
+        print("Most online compilers support these libraries.")
+        print("\nRecommended online compilers:")
+        print("1. Google Colab: Best for data science projects")
+        print("2. Replit: Good general Python environment")
+        print("3. Kaggle Notebooks: Excellent for ML projects")
+        print("\nTo install missing libraries:")
+        print("pip install numpy pandas")
