@@ -1,0 +1,470 @@
+import numpy as np
+import math
+from collections import Counter
+
+class KNNClassifier:
+    """
+    K-Nearest Neighbors Classifier from scratch
+    """
+    
+    def __init__(self, k=5, distance_metric='euclidean'):
+        self.k = k
+        self.distance_metric = distance_metric
+        self.X_train = None
+        self.y_train = None
+        self.classes = None
+        
+    def fit(self, X, y):
+        self.X_train = np.array(X)
+        self.y_train = np.array(y)
+        self.classes = np.unique(y)
+        
+    def _calculate_distance(self, x1, x2):
+        if self.distance_metric == 'euclidean':
+            return np.sqrt(np.sum((x1 - x2) ** 2))
+        elif self.distance_metric == 'manhattan':
+            return np.sum(np.abs(x1 - x2))
+        elif self.distance_metric == 'minkowski':
+            p = 3
+            return np.power(np.sum(np.abs(x1 - x2) ** p), 1/p)
+        else:
+            raise ValueError(f"Unknown distance metric: {self.distance_metric}")
+    
+    def _get_k_nearest_neighbors(self, x):
+        distances = []
+        for i, train_point in enumerate(self.X_train):
+            dist = self._calculate_distance(x, train_point)
+            distances.append((i, dist))
+        
+        distances.sort(key=lambda x: x[1])
+        k_nearest_indices = [idx for idx, _ in distances[:self.k]]
+        k_nearest_distances = [dist for _, dist in distances[:self.k]]
+        
+        return k_nearest_indices, k_nearest_distances
+    
+    def predict(self, X):
+        predictions = []
+        for x in X:
+            neighbors_idx, _ = self._get_k_nearest_neighbors(x)
+            neighbor_labels = self.y_train[neighbors_idx]
+            most_common = Counter(neighbor_labels).most_common(1)[0][0]
+            predictions.append(most_common)
+        return np.array(predictions)
+    
+    def predict_proba(self, X):
+        probabilities = []
+        for x in X:
+            neighbors_idx, distances = self._get_k_nearest_neighbors(x)
+            distances = np.array(distances)
+            if np.any(distances == 0):
+                distances = distances + 1e-10
+            
+            neighbor_labels = self.y_train[neighbors_idx]
+            weights = 1 / distances
+            
+            class_probs = {}
+            for cls in self.classes:
+                class_mask = (neighbor_labels == cls)
+                class_weight = np.sum(weights[class_mask])
+                total_weight = np.sum(weights)
+                class_probs[cls] = class_weight / total_weight if total_weight > 0 else 0
+            
+            prob_sum = sum(class_probs.values())
+            if prob_sum > 0:
+                class_probs = {k: v/prob_sum for k, v in class_probs.items()}
+            
+            prob_list = [class_probs.get(cls, 0) for cls in self.classes]
+            probabilities.append(prob_list)
+        
+        return np.array(probabilities)
+    
+    def evaluate(self, X_test, y_test):
+        y_pred = self.predict(X_test)
+        accuracy = np.mean(y_pred == y_test)
+        
+        confusion_matrix = {}
+        for true_class in self.classes:
+            confusion_matrix[true_class] = {}
+            for pred_class in self.classes:
+                confusion_matrix[true_class][pred_class] = 0
+        
+        for true, pred in zip(y_test, y_pred):
+            confusion_matrix[true][pred] += 1
+        
+        class_metrics = {}
+        for cls in self.classes:
+            tp = confusion_matrix[cls][cls]
+            fp = sum(confusion_matrix[other][cls] for other in self.classes if other != cls)
+            fn = sum(confusion_matrix[cls][other] for other in self.classes if other != cls)
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+            
+            class_metrics[cls] = {
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1,
+                'support': sum(confusion_matrix[cls].values())
+            }
+        
+        return {
+            'accuracy': accuracy,
+            'confusion_matrix': confusion_matrix,
+            'class_metrics': class_metrics
+        }
+
+def load_iris_dataset():
+    iris_data = [
+        [5.1, 3.5, 1.4, 0.2], [4.9, 3.0, 1.4, 0.2], [4.7, 3.2, 1.3, 0.2],
+        [4.6, 3.1, 1.5, 0.2], [5.0, 3.6, 1.4, 0.2], [5.4, 3.9, 1.7, 0.4],
+        [4.6, 3.4, 1.4, 0.3], [5.0, 3.4, 1.5, 0.2], [4.4, 2.9, 1.4, 0.2],
+        [4.9, 3.1, 1.5, 0.1], [5.4, 3.7, 1.5, 0.2], [4.8, 3.4, 1.6, 0.2],
+        [4.8, 3.0, 1.4, 0.1], [4.3, 3.0, 1.1, 0.1], [5.8, 4.0, 1.2, 0.2],
+        [5.7, 4.4, 1.5, 0.4], [5.4, 3.9, 1.3, 0.4], [5.1, 3.5, 1.4, 0.3],
+        [5.7, 3.8, 1.7, 0.3], [5.1, 3.8, 1.5, 0.3], [5.4, 3.4, 1.7, 0.2],
+        [5.1, 3.7, 1.5, 0.4], [4.6, 3.6, 1.0, 0.2], [5.1, 3.3, 1.7, 0.5],
+        [4.8, 3.4, 1.9, 0.2], [5.0, 3.0, 1.6, 0.2], [5.0, 3.4, 1.6, 0.4],
+        [5.2, 3.5, 1.5, 0.2], [5.2, 3.4, 1.4, 0.2], [4.7, 3.2, 1.6, 0.2],
+        [4.8, 3.1, 1.6, 0.2], [5.4, 3.4, 1.5, 0.4], [5.2, 4.1, 1.5, 0.1],
+        [5.5, 4.2, 1.4, 0.2], [4.9, 3.1, 1.5, 0.1], [5.0, 3.2, 1.2, 0.2],
+        [5.5, 3.5, 1.3, 0.2], [4.9, 3.1, 1.5, 0.1], [4.4, 3.0, 1.3, 0.2],
+        [5.1, 3.4, 1.5, 0.2], [5.0, 3.5, 1.3, 0.3], [4.5, 2.3, 1.3, 0.3],
+        [4.4, 3.2, 1.3, 0.2], [5.0, 3.5, 1.6, 0.6], [5.1, 3.8, 1.9, 0.4],
+        [4.8, 3.0, 1.4, 0.3], [5.1, 3.8, 1.6, 0.2], [4.6, 3.2, 1.4, 0.2],
+        [5.3, 3.7, 1.5, 0.2], [5.0, 3.3, 1.4, 0.2],
+        
+        [7.0, 3.2, 4.7, 1.4], [6.4, 3.2, 4.5, 1.5], [6.9, 3.1, 4.9, 1.5],
+        [5.5, 2.3, 4.0, 1.3], [6.5, 2.8, 4.6, 1.5], [5.7, 2.8, 4.5, 1.3],
+        [6.3, 3.3, 4.7, 1.6], [4.9, 2.4, 3.3, 1.0], [6.6, 2.9, 4.6, 1.3],
+        [5.2, 2.7, 3.9, 1.4], [5.0, 2.0, 3.5, 1.0], [5.9, 3.0, 4.2, 1.5],
+        [6.0, 2.2, 4.0, 1.0], [6.1, 2.9, 4.7, 1.4], [5.6, 2.9, 3.6, 1.3],
+        [6.7, 3.1, 4.4, 1.4], [5.6, 3.0, 4.5, 1.5], [5.8, 2.7, 4.1, 1.0],
+        [6.2, 2.2, 4.5, 1.5], [5.6, 2.5, 3.9, 1.1], [5.9, 3.2, 4.8, 1.8],
+        [6.1, 2.8, 4.0, 1.3], [6.3, 2.5, 4.9, 1.5], [6.1, 2.8, 4.7, 1.2],
+        [6.4, 2.9, 4.3, 1.3], [6.6, 3.0, 4.4, 1.4], [6.8, 2.8, 4.8, 1.4],
+        [6.7, 3.0, 5.0, 1.7], [6.0, 2.9, 4.5, 1.5], [5.7, 2.6, 3.5, 1.0],
+        [5.5, 2.4, 3.8, 1.1], [5.5, 2.4, 3.7, 1.0], [5.8, 2.7, 3.9, 1.2],
+        [6.0, 2.7, 5.1, 1.6], [5.4, 3.0, 4.5, 1.5], [6.0, 3.4, 4.5, 1.6],
+        [6.7, 3.1, 4.7, 1.5], [6.3, 2.3, 4.4, 1.3], [5.6, 3.0, 4.1, 1.3],
+        [5.5, 2.5, 4.0, 1.3], [5.5, 2.6, 4.4, 1.2], [6.1, 3.0, 4.6, 1.4],
+        [5.8, 2.6, 4.0, 1.2], [5.0, 2.3, 3.3, 1.0], [5.6, 2.7, 4.2, 1.3],
+        [5.7, 3.0, 4.2, 1.2], [5.7, 2.9, 4.2, 1.3], [6.2, 2.9, 4.3, 1.3],
+        [5.1, 2.5, 3.0, 1.1], [5.7, 2.8, 4.1, 1.3],
+        
+        [6.3, 3.3, 6.0, 2.5], [5.8, 2.7, 5.1, 1.9], [7.1, 3.0, 5.9, 2.1],
+        [6.3, 2.9, 5.6, 1.8], [6.5, 3.0, 5.8, 2.2], [7.6, 3.0, 6.6, 2.1],
+        [4.9, 2.5, 4.5, 1.7], [7.3, 2.9, 6.3, 1.8], [6.7, 2.5, 5.8, 1.8],
+        [7.2, 3.6, 6.1, 2.5], [6.5, 3.2, 5.1, 2.0], [6.4, 2.7, 5.3, 1.9],
+        [6.8, 3.0, 5.5, 2.1], [5.7, 2.5, 5.0, 2.0], [5.8, 2.8, 5.1, 2.4],
+        [6.4, 3.2, 5.3, 2.3], [6.5, 3.0, 5.5, 2.0], [7.7, 3.8, 6.7, 2.2],
+        [7.7, 2.6, 6.9, 2.3], [6.0, 2.2, 5.0, 1.5], [6.9, 3.2, 5.7, 2.3],
+        [5.6, 2.8, 4.9, 2.0], [7.7, 2.8, 6.7, 2.0], [6.3, 2.7, 4.9, 1.8],
+        [6.7, 3.3, 5.7, 2.1], [7.2, 3.2, 6.0, 1.8], [6.2, 2.8, 4.8, 1.8],
+        [6.1, 3.0, 4.9, 1.8], [6.4, 2.8, 5.6, 2.1], [7.2, 3.0, 5.8, 1.6],
+        [7.4, 2.8, 6.1, 1.9], [7.9, 3.8, 6.4, 2.0], [6.4, 2.8, 5.6, 2.2],
+        [6.3, 2.8, 5.1, 1.5], [6.1, 2.6, 5.6, 1.4], [7.7, 3.0, 6.1, 2.3],
+        [6.3, 3.4, 5.6, 2.4], [6.4, 3.1, 5.5, 1.8], [6.0, 3.0, 4.8, 1.8],
+        [6.9, 3.1, 5.4, 2.1], [6.7, 3.1, 5.6, 2.4], [6.9, 3.1, 5.1, 2.3],
+        [5.8, 2.7, 5.1, 1.9], [6.8, 3.2, 5.9, 2.3], [6.7, 3.3, 5.7, 2.5],
+        [6.7, 3.0, 5.2, 2.3], [6.3, 2.5, 5.0, 1.9], [6.5, 3.0, 5.2, 2.0],
+        [6.2, 3.4, 5.4, 2.3], [5.9, 3.0, 5.1, 1.8]
+    ]
+    
+    iris_labels = (
+        ['Iris-setosa'] * 50 + 
+        ['Iris-versicolor'] * 50 + 
+        ['Iris-virginica'] * 50
+    )
+    
+    return np.array(iris_data), np.array(iris_labels)
+
+def train_test_split(X, y, test_size=0.2, random_state=42):
+    np.random.seed(random_state)
+    n_samples = len(X)
+    indices = np.arange(n_samples)
+    np.random.shuffle(indices)
+    
+    test_samples = int(n_samples * test_size)
+    test_indices = indices[:test_samples]
+    train_indices = indices[test_samples:]
+    
+    return X[train_indices], X[test_indices], y[train_indices], y[test_indices]
+
+def normalize_features(X_train, X_test):
+    min_vals = np.min(X_train, axis=0)
+    max_vals = np.max(X_train, axis=0)
+    range_vals = max_vals - min_vals
+    range_vals[range_vals == 0] = 1
+    
+    X_train_norm = (X_train - min_vals) / range_vals
+    X_test_norm = (X_test - min_vals) / range_vals
+    
+    return X_train_norm, X_test_norm
+
+def print_dataset_info(X, y):
+    print("\n" + "=" * 70)
+    print("IRIS DATASET INFORMATION")
+    print("=" * 70)
+    
+    print(f"\nDataset Shape:")
+    print(f"  • Total samples: {len(X)}")
+    print(f"  • Features per sample: {X.shape[1]}")
+    print(f"  • Features: Sepal Length, Sepal Width, Petal Length, Petal Width")
+    
+    print(f"\nClass Distribution:")
+    unique_classes, class_counts = np.unique(y, return_counts=True)
+    for cls, count in zip(unique_classes, class_counts):
+        percentage = (count / len(y)) * 100
+        print(f"  • {cls}: {count} samples ({percentage:.1f}%)")
+    
+    print(f"\nFeature Statistics:")
+    feature_names = ['Sepal Length', 'Sepal Width', 'Petal Length', 'Petal Width']
+    for i, name in enumerate(feature_names):
+        print(f"  • {name}:")
+        print(f"      Min: {np.min(X[:, i]):.2f}, Max: {np.max(X[:, i]):.2f}")
+        print(f"      Mean: {np.mean(X[:, i]):.2f}, Std: {np.std(X[:, i]):.2f}")
+
+def print_iris_descriptions():
+    print("\n" + "=" * 70)
+    print("IRIS FLOWER SPECIES DESCRIPTION")
+    print("=" * 70)
+    
+    descriptions = {
+        'Iris-setosa': {
+            'description': 'Also known as "Bristle-pointed Iris"',
+            'characteristics': [
+                '• Sepals: Usually larger than petals',
+                '• Petals: Small, often hidden by sepals',
+                '• Color: Typically purple-blue',
+                '• Habitat: Cold northern regions',
+                '• Distinctive: Easiest to distinguish'
+            ],
+            'measurements': 'Sepal: 4-6 cm, Petal: 2-3 cm'
+        },
+        'Iris-versicolor': {
+            'description': 'Also known as "Blue Flag Iris" or "Harlequin Blueflag"',
+            'characteristics': [
+                '• Sepals: Spread widely',
+                '• Petals: Upright, often colorful',
+                '• Color: Blue to purple with white/yellow signals',
+                '• Habitat: Wetlands and marshes',
+                '• Distinctive: Medium-sized flowers'
+            ],
+            'measurements': 'Sepal: 5-8 cm, Petal: 3-5 cm'
+        },
+        'Iris-virginica': {
+            'description': 'Also known as "Virginia Iris" or "Southern Blue Flag"',
+            'characteristics': [
+                '• Sepals: Arching downward',
+                '• Petals: Often smaller than sepals',
+                '• Color: Light blue to violet',
+                '• Habitat: Southeastern US wetlands',
+                '• Distinctive: Largest flowers of the three'
+            ],
+            'measurements': 'Sepal: 7-10 cm, Petal: 4-7 cm'
+        }
+    }
+    
+    for species, info in descriptions.items():
+        print(f"\n{species}:")
+        print(f"  {info['description']}")
+        print(f"\n  Characteristics:")
+        for char in info['characteristics']:
+            print(f"    {char}")
+        print(f"  Typical Measurements: {info['measurements']}")
+
+def print_confusion_matrix(confusion_matrix, classes):
+    print("\nConfusion Matrix:")
+    print("-" * 60)
+    
+    header = "Actual \\ Predicted".ljust(20)
+    for cls in classes:
+        header += f"{cls[:15]:>15}"
+    print(header)
+    print("-" * 60)
+    
+    for true_cls in classes:
+        row = f"{true_cls:<20}"
+        for pred_cls in classes:
+            count = confusion_matrix[true_cls][pred_cls]
+            row += f"{count:>15}"
+        print(row)
+    
+    print("-" * 60)
+
+def find_best_k(X_train, y_train, X_val, y_val, k_values=range(1, 21)):
+    print("\n" + "=" * 70)
+    print("FINDING OPTIMAL K VALUE")
+    print("=" * 70)
+    
+    accuracies = []
+    
+    print(f"\nTesting k values from {min(k_values)} to {max(k_values)}:")
+    print("-" * 40)
+    
+    for k in k_values:
+        knn = KNNClassifier(k=k)
+        knn.fit(X_train, y_train)
+        y_pred = knn.predict(X_val)
+        accuracy = np.mean(y_pred == y_val)
+        accuracies.append(accuracy)
+        
+        print(f"  k = {k:2d}: Accuracy = {accuracy:.4f} ({accuracy*100:.1f}%)")
+    
+    best_k = k_values[np.argmax(accuracies)]
+    best_accuracy = max(accuracies)
+    
+    print(f"\nBest k value: {best_k} (Accuracy: {best_accuracy*100:.2f}%)")
+    
+    return best_k, accuracies
+
+def main():
+    print("=" * 70)
+    print("IRIS FLOWER CLASSIFICATION USING K-NEAREST NEIGHBORS")
+    print("=" * 70)
+    print("Classifying Iris flowers into three species:")
+    print("• Iris-setosa • Iris-versicolor • Iris-virginica\n")
+    
+    print("1. LOADING IRIS DATASET")
+    print("-" * 50)
+    X, y = load_iris_dataset()
+    print(f"✓ Dataset loaded successfully")
+    print_dataset_info(X, y)
+    
+    print_iris_descriptions()
+    
+    print("\n2. SPLITTING DATA")
+    print("-" * 50)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    print(f"Training samples: {len(X_train)}")
+    print(f"Testing samples: {len(X_test)}")
+    
+    print("\n3. NORMALIZING FEATURES")
+    print("-" * 50)
+    X_train_norm, X_test_norm = normalize_features(X_train, X_test)
+    print("✓ Features normalized using min-max scaling")
+    
+    print("\n4. MODEL SELECTION")
+    print("-" * 50)
+    
+    X_train_split, X_val, y_train_split, y_val = train_test_split(X_train_norm, y_train, test_size=0.2, random_state=42)
+    
+    best_k, accuracies = find_best_k(X_train_split, y_train_split, X_val, y_val, k_values=range(1, 21))
+    
+    print("\n5. TRAINING FINAL MODEL")
+    print("-" * 50)
+    print(f"Using k = {best_k} (optimal value)")
+    
+    knn = KNNClassifier(k=best_k, distance_metric='euclidean')
+    knn.fit(X_train_norm, y_train)
+    
+    print("✓ Model trained successfully")
+    print(f"• Distance metric: {knn.distance_metric}")
+    print(f"• Number of neighbors: {knn.k}")
+    print(f"• Classes: {list(knn.classes)}")
+    
+    print("\n6. MODEL EVALUATION")
+    print("-" * 50)
+    
+    y_pred = knn.predict(X_test_norm)
+    results = knn.evaluate(X_test_norm, y_test)
+    
+    print(f"\nTest Results:")
+    print(f"• Accuracy: {results['accuracy']:.4f} ({results['accuracy']*100:.2f}%)")
+    print(f"• Correct predictions: {int(results['accuracy'] * len(y_test))}/{len(y_test)}")
+    
+    print_confusion_matrix(results['confusion_matrix'], knn.classes)
+    
+    print("\nClassification Report:")
+    print("-" * 60)
+    print(f"{'Class':<20} {'Precision':<12} {'Recall':<12} {'F1-Score':<12} {'Support':<10}")
+    print("-" * 60)
+    
+    for cls in knn.classes:
+        metrics = results['class_metrics'][cls]
+        print(f"{cls:<20} {metrics['precision']:<12.4f} {metrics['recall']:<12.4f} {metrics['f1_score']:<12.4f} {metrics['support']:<10}")
+    
+    print("-" * 60)
+    
+    print("\n" + "=" * 70)
+    print("INDIVIDUAL FLOWER PREDICTIONS")
+    print("=" * 70)
+    
+    example_flowers = [
+        {
+            'name': 'Typical Setosa',
+            'features': [5.1, 3.5, 1.4, 0.2],
+            'true_species': 'Iris-setosa'
+        },
+        {
+            'name': 'Typical Versicolor',
+            'features': [5.9, 3.0, 4.2, 1.5],
+            'true_species': 'Iris-versicolor'
+        },
+        {
+            'name': 'Typical Virginica',
+            'features': [6.3, 3.3, 6.0, 2.5],
+            'true_species': 'Iris-virginica'
+        }
+    ]
+    
+    for flower in example_flowers:
+        min_vals = np.min(X_train, axis=0)
+        max_vals = np.max(X_train, axis=0)
+        range_vals = max_vals - min_vals
+        range_vals[range_vals == 0] = 1
+        
+        flower_norm = (np.array(flower['features']) - min_vals) / range_vals
+        
+        prediction = knn.predict([flower_norm])[0]
+        probabilities = knn.predict_proba([flower_norm])[0]
+        
+        print(f"\n🌼 {flower['name']}:")
+        print(f"  Features: Sepal={flower['features'][0]}cm × {flower['features'][1]}cm, Petal={flower['features'][2]}cm × {flower['features'][3]}cm")
+        print(f"  True Species: {flower['true_species']}")
+        print(f"  Predicted Species: {prediction}")
+        print(f"  Prediction Confidence:")
+        for cls, prob in zip(knn.classes, probabilities):
+            print(f"    • {cls}: {prob:.2%}")
+        
+        if prediction == flower['true_species']:
+            print(f"  ✓ Correct prediction!")
+        else:
+            print(f"  ✗ Incorrect prediction")
+        
+        neighbors_idx, distances = knn._get_k_nearest_neighbors(flower_norm)
+        neighbor_species = y_train[neighbors_idx]
+        
+        print(f"  Nearest Neighbors (k={knn.k}):")
+        for i, (idx, dist, species) in enumerate(zip(neighbors_idx, distances, neighbor_species)):
+            features_str = f"[{X_train[idx][0]:.1f}, {X_train[idx][1]:.1f}, {X_train[idx][2]:.1f}, {X_train[idx][3]:.1f}]"
+            print(f"    {i+1}. Distance: {dist:.3f}, Species: {species}, Features: {features_str}")
+    
+    print("\n" + "=" * 70)
+    print("KNN ALGORITHM SUMMARY")
+    print("=" * 70)
+    
+    print("\nADVANTAGES:")
+    print("• Simple to understand and implement")
+    print("• No training phase (lazy learning)")
+    print("• Adapts easily to new data")
+    print("• Works well for multi-class problems")
+    
+    print("\nDISADVANTAGES:")
+    print("• Computationally expensive for large datasets")
+    print("• Sensitive to irrelevant features")
+    print("• Needs feature scaling")
+    print("• Choice of k and distance metric affects results")
+    
+    print("\n" + "=" * 70)
+    print("PROGRAM COMPLETED SUCCESSFULLY!")
+    print("=" * 70)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        print("\nMake sure numpy is installed.")
+        print("Online compilers usually have numpy pre-installed.")
