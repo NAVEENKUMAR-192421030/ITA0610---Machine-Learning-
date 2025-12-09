@@ -1,0 +1,291 @@
+import numpy as np
+
+class LinearRegression:
+    def __init__(self, learning_rate=0.01, n_iterations=1000):
+        """
+        Initialize Linear Regression model
+        
+        Parameters:
+        - learning_rate: Step size for gradient descent
+        - n_iterations: Number of iterations for training
+        """
+        self.learning_rate = learning_rate
+        self.n_iterations = n_iterations
+        self.weights = None
+        self.bias = None
+        self.loss_history = []
+    
+    def fit(self, X, y):
+        """
+        Train the linear regression model using gradient descent
+        
+        Parameters:
+        - X: Feature matrix (n_samples, n_features)
+        - y: Target vector (n_samples,)
+        """
+        n_samples, n_features = X.shape
+        
+        # Initialize parameters
+        self.weights = np.zeros(n_features)
+        self.bias = 0
+        
+        # Gradient Descent
+        for iteration in range(self.n_iterations):
+            # Predictions
+            y_pred = np.dot(X, self.weights) + self.bias
+            
+            # Compute gradients
+            dw = (1/n_samples) * np.dot(X.T, (y_pred - y))
+            db = (1/n_samples) * np.sum(y_pred - y)
+            
+            # Update parameters
+            self.weights -= self.learning_rate * dw
+            self.bias -= self.learning_rate * db
+            
+            # Calculate and store loss (Mean Squared Error)
+            loss = np.mean((y_pred - y) ** 2)
+            self.loss_history.append(loss)
+            
+            # Print progress every 100 iterations
+            if iteration % 100 == 0:
+                print(f"Iteration {iteration}: Loss = {loss:.4f}")
+    
+    def predict(self, X):
+        """
+        Make predictions using the trained model
+        
+        Parameters:
+        - X: Feature matrix
+        
+        Returns:
+        - Predictions
+        """
+        return np.dot(X, self.weights) + self.bias
+    
+    def get_coefficients(self):
+        """
+        Get model coefficients
+        
+        Returns:
+        - weights: Feature coefficients
+        - bias: Intercept
+        """
+        return self.weights, self.bias
+    
+    def get_loss_history(self):
+        """
+        Get the loss history
+        
+        Returns:
+        - List of loss values during training
+        """
+        return self.loss_history
+
+def mean_squared_error(y_true, y_pred):
+    """
+    Calculate Mean Squared Error
+    
+    Parameters:
+    - y_true: Actual values
+    - y_pred: Predicted values
+    
+    Returns:
+    - MSE value
+    """
+    return np.mean((y_true - y_pred) ** 2)
+
+def r2_score(y_true, y_pred):
+    """
+    Calculate R-squared score
+    
+    Parameters:
+    - y_true: Actual values
+    - y_pred: Predicted values
+    
+    Returns:
+    - R² value
+    """
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    return 1 - (ss_res / ss_tot)
+
+def train_test_split(X, y, test_size=0.2, random_state=None):
+    """
+    Custom train-test split function
+    
+    Parameters:
+    - X: Feature matrix
+    - y: Target vector
+    - test_size: Proportion of test data (default: 0.2)
+    - random_state: Random seed for reproducibility
+    
+    Returns:
+    - X_train, X_test, y_train, y_test
+    """
+    if random_state is not None:
+        np.random.seed(random_state)
+    
+    n_samples = len(X)
+    test_samples = int(n_samples * test_size)
+    
+    # Shuffle indices
+    indices = np.arange(n_samples)
+    np.random.shuffle(indices)
+    
+    test_indices = indices[:test_samples]
+    train_indices = indices[test_samples:]
+    
+    return X[train_indices], X[test_indices], y[train_indices], y[test_indices]
+
+def generate_sample_data(n_samples=100, random_state=42):
+    """
+    Generate sample data for demonstration
+    
+    Returns:
+    - X: Feature matrix
+    - y: Target vector
+    """
+    np.random.seed(random_state)
+    
+    # Single feature for simplicity
+    X = 2 * np.random.rand(n_samples, 1)
+    y = 4 + 3 * X + np.random.randn(n_samples, 1)
+    
+    return X, y.flatten()
+
+def main():
+    """
+    Main function to demonstrate Linear Regression
+    """
+    print("=" * 60)
+    print("LINEAR REGRESSION IMPLEMENTATION")
+    print("=" * 60)
+    print("Working without matplotlib - text-only output\n")
+    
+    # Step 1: Generate sample data
+    print("1. Generating sample data...")
+    X, y = generate_sample_data(n_samples=100)
+    print(f"   Generated {len(X)} samples")
+    
+    # Step 2: Split data into training and testing sets
+    print("\n2. Splitting data into training and testing sets...")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    print(f"   Training samples: {len(X_train)}")
+    print(f"   Testing samples: {len(X_test)}")
+    
+    # Step 3: Create and train the model
+    print("\n3. Training Linear Regression model...")
+    print("   (Using Gradient Descent)")
+    model = LinearRegression(learning_rate=0.1, n_iterations=500)
+    model.fit(X_train, y_train)
+    
+    # Step 4: Make predictions
+    print("\n4. Making predictions on test data...")
+    predictions = model.predict(X_test)
+    
+    # Step 5: Evaluate the model
+    print("\n5. Model Evaluation:")
+    print("   " + "-" * 40)
+    
+    # Get model coefficients
+    weights, bias = model.get_coefficients()
+    print(f"   Intercept (bias): {bias:.4f}")
+    print(f"   Coefficient (weight): {weights[0]:.4f}")
+    print(f"   Equation: y = {weights[0]:.4f} * x + {bias:.4f}")
+    
+    # Calculate metrics
+    mse = mean_squared_error(y_test, predictions)
+    r2 = r2_score(y_test, predictions)
+    
+    print(f"\n   Mean Squared Error: {mse:.4f}")
+    print(f"   R² Score: {r2:.4f}")
+    
+    # Show loss history
+    loss_history = model.get_loss_history()
+    print(f"\n   Initial Loss: {loss_history[0]:.4f}")
+    print(f"   Final Loss: {loss_history[-1]:.4f}")
+    print(f"   Improvement: {loss_history[0] - loss_history[-1]:.4f}")
+    
+    # Step 6: Show sample predictions
+    print("\n6. Sample Predictions on Test Data:")
+    print("   " + "-" * 40)
+    print("   Index | Actual   | Predicted | Error    ")
+    print("   " + "-" * 40)
+    
+    for i in range(min(5, len(y_test))):
+        actual = y_test[i]
+        predicted = predictions[i]
+        error = actual - predicted
+        print(f"   {i:5d} | {actual:8.4f} | {predicted:9.4f} | {error:8.4f}")
+    
+    # Step 7: Predict on new data
+    print("\n7. Predictions on New Data:")
+    print("   " + "-" * 40)
+    new_X = np.array([[1.0], [1.5], [2.0]])
+    new_predictions = model.predict(new_X)
+    
+    for i, x_val in enumerate(new_X):
+        y_pred = new_predictions[i]
+        print(f"   For x = {x_val[0]:.1f}, predicted y = {y_pred:.4f}")
+    
+    print("\n" + "=" * 60)
+    print("PROGRAM COMPLETED SUCCESSFULLY!")
+    print("=" * 60)
+    
+    # Summary
+    print("\nSUMMARY:")
+    print(f"- Model learned: y = {weights[0]:.4f}x + {bias:.4f}")
+    print(f"- R² Score: {r2:.4f} (closer to 1 is better)")
+    print(f"- MSE: {mse:.4f} (lower is better)")
+    print(f"- Loss reduced from {loss_history[0]:.4f} to {loss_history[-1]:.4f}")
+
+# Run the program
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        print("\nTroubleshooting:")
+        print("1. Make sure numpy is installed (online compilers usually have it)")
+        print("2. If numpy is missing, try importing it with:")
+        print("   import sys")
+        print("   !pip install numpy  # In Jupyter/Colab")
+        print("   # Or use: pip install numpy  # In terminal")
+
+# Alternative: Even simpler version if numpy is also missing
+print("\n" + "=" * 60)
+print("ALTERNATIVE: Pure Python Version (No NumPy)")
+print("=" * 60)
+print("""
+If numpy is not available, here's the core algorithm in pure Python:
+
+class SimpleLinearRegression:
+    def __init__(self):
+        self.slope = 0
+        self.intercept = 0
+    
+    def fit(self, X, y):
+        # Calculate means
+        x_mean = sum(X) / len(X)
+        y_mean = sum(y) / len(y)
+        
+        # Calculate slope (using formula)
+        numerator = sum((xi - x_mean) * (yi - y_mean) for xi, yi in zip(X, y))
+        denominator = sum((xi - x_mean) ** 2 for xi in X)
+        
+        self.slope = numerator / denominator
+        self.intercept = y_mean - self.slope * x_mean
+    
+    def predict(self, X):
+        return [self.slope * x + self.intercept for x in X]
+
+# Example usage:
+# X = [1, 2, 3, 4, 5]
+# y = [2, 4, 5, 4, 5]
+# model = SimpleLinearRegression()
+# model.fit(X, y)
+# predictions = model.predict([6, 7])
+""")
