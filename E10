@@ -1,0 +1,523 @@
+import numpy as np
+import math
+
+class GaussianMixtureModel:
+    """
+    Gaussian Mixture Model using Expectation-Maximization Algorithm
+    """
+    
+    def __init__(self, n_components=3, max_iter=100, tol=1e-6, random_state=42):
+        """
+        Initialize GMM parameters
+        
+        Parameters:
+        - n_components: Number of Gaussian components (clusters)
+        - max_iter: Maximum number of EM iterations
+        - tol: Convergence tolerance
+        - random_state: Random seed for reproducibility
+        """
+        self.n_components = n_components
+        self.max_iter = max_iter
+        self.tol = tol
+        self.random_state = random_state
+        
+        # Parameters to be learned
+        self.means = None          # Component means
+        self.covariances = None    # Component covariances
+        self.weights = None        # Mixing weights (priors)
+        self.responsibilities = None  # Posterior probabilities
+        
+        # Tracking variables
+        self.log_likelihood_history = []
+        
+    def _initialize_parameters(self, X):
+        """Initialize GMM parameters using K-means++ like initialization"""
+        np.random.seed(self.random_state)
+        n_samples, n_features = X.shape
+        
+        # Initialize means using random samples
+        indices = np.random.choice(n_samples, self.n_components, replace=False)
+        self.means = X[indices].copy()
+        
+        # Initialize covariances as identity matrices
+        self.covariances = np.array([np.eye(n_features) for _ in range(self.n_components)])
+        
+        # Initialize weights as uniform
+        self.weights = np.ones(self.n_components) / self.n_components
+        
+    def _multivariate_gaussian_pdf(self, X, mean, cov):
+        """
+        Calculate multivariate Gaussian probability density function
+        
+        Parameters:
+        - X: Data points
+        - mean: Mean vector
+        - cov: Covariance matrix
+        
+        Returns:
+        - Probability densities
+        """
+        n_features = X.shape[1]
+        
+        # Add small value to diagonal for numerical stability
+        cov = cov + np.eye(cov.shape[0]) * 1e-6
+        
+        # Calculate determinant and inverse
+        det = np.linalg.det(cov)
+        inv = np.linalg.inv(cov)
+        
+        # Constant term
+        norm_const = 1.0 / (math.pow((2 * math.pi), float(n_features) / 2) * math.pow(det, 0.5))
+        
+        # Calculate exponent
+        X_mean = X - mean
+        exponent = -0.5 * np.sum(np.dot(X_mean, inv) * X_mean, axis=1)
+        
+        # Calculate probability
+        probabilities = norm_const * np.exp(exponent)
+        
+        return probabilities
+    
+    def _expectation_step(self, X):
+        """
+        E-step: Calculate responsibilities using current parameters
+        
+        Parameters:
+        - X: Data points
+        
+        Returns:
+        - Log likelihood
+        """
+        n_samples = X.shape[0]
+        
+        # Calculate weighted probabilities for each component
+        weighted_probs = np.zeros((n_samples, self.n_components))
+        
+        for k in range(self.n_components):
+            # Probability from k-th Gaussian
+            prob = self._multivariate_gaussian_pdf(X, self.means[k], self.covariances[k])
+            # Weight by mixing coefficient
+            weighted_probs[:, k] = self.weights[k] * prob
+        
+        # Sum over all components (denominator for responsibilities)
+        sum_weighted_probs = np.sum(weighted_probs, axis=1, keepdims=True)
+        
+        # Avoid division by zero
+        sum_weighted_probs = np.where(sum_weighted_probs == 0, 1e-10, sum_weighted_probs)
+        
+        # Calculate responsibilities (posterior probabilities)
+        self.responsibilities = weighted_probs / sum_weighted_probs
+        
+        # Calculate log likelihood
+        log_likelihood = np.sum(np.log(sum_weighted_probs))
+        
+        return log_likelihood
+    
+    def _maximization_step(self, X):
+        """
+        M-step: Update parameters using current responsibilities
+        
+        Parameters:
+        - X: Data points
+        """
+        n_samples, n_features = X.shape
+        
+        # Calculate effective number of points in each cluster
+        Nk = np.sum(self.responsibilities, axis=0)
+        
+        # Update weights (mixing coefficients)
+        self.weights = Nk / n_samples
+        
+        # Update means
+        for k in range(self.n_components):
+            # Weighted sum of points
+            weighted_sum = np.dot(self.responsibilities[:, k], X)
+            self.means[k] = weighted_sum / Nk[k]
+            
+            # Update covariances
+            diff = X - self.means[k]
+            weighted_diff = self.responsibilities[:, k][:, np.newaxis] * diff
+            self.covariances[k] = np.dot(weighted_diff.T, diff) / Nk[k]
+            
+            # Ensure covariance matrix is positive definite
+            self.covariances[k] = self.covariances[k] + np.eye(n_features) * 1e-6
+    
+    def fit(self, X):
+        """
+        Fit GMM to data using EM algorithm
+        
+        Parameters:
+        - X: Data points (n_samples x n_features)
+        """
+        # Initialize parameters
+        self._initialize_parameters(X)
+        
+        # EM iterations
+        prev_log_likelihood = -np.inf
+        
+        print(f"\nStarting EM Algorithm for {self.n_components} components")
+        print("-" * 50)
+        
+        for iteration in range(self.max_iter):
+            # E-step
+            log_likelihood = self._expectation_step(X)
+            self.log_likelihood_history.append(log_likelihood)
+            
+            # Check convergence
+            likelihood_change = log_likelihood - prev_log_likelihood
+            if iteration > 0 and abs(likelihood_change) < self.tol:
+                print(f"Converged at iteration {iteration}")
+                break
+            
+            # M-step
+            self._maximization_step(X)
+            
+            # Print progress
+            if iteration % 10 == 0:
+                print(f"Iteration {iteration:3d}: Log Likelihood = {log_likelihood:.4f}")
+            
+            prev_log_likelihood = log_likelihood
+        
+        print(f"Final Iteration {iteration}: Log Likelihood = {log_likelihood:.4f}")
+        print("-" * 50)
+        
+        return self
+    
+    def predict(self, X):
+        """
+        Predict cluster assignments for new data
+        
+        Parameters:
+        - X: Data points
+        
+        Returns:
+        - Cluster labels
+        """
+        log_likelihood = self._expectation_step(X)
+        return np.argmax(self.responsibilities, axis=1)
+    
+    def predict_proba(self, X):
+        """
+        Predict posterior probabilities for new data
+        
+        Parameters:
+        - X: Data points
+        
+        Returns:
+        - Posterior probabilities
+        """
+        log_likelihood = self._expectation_step(X)
+        return self.responsibilities
+    
+    def get_parameters(self):
+        """
+        Get learned GMM parameters
+        
+        Returns:
+        - means, covariances, weights
+        """
+        return self.means, self.covariances, self.weights
+    
+    def get_bic(self, X):
+        """
+        Calculate Bayesian Information Criterion
+        
+        Parameters:
+        - X: Data points
+        
+        Returns:
+        - BIC score (lower is better)
+        """
+        n_samples, n_features = X.shape
+        
+        # Number of parameters
+        # Means: n_components * n_features
+        # Covariances: n_components * n_features * (n_features + 1) / 2
+        # Weights: n_components - 1
+        n_params = (self.n_components * n_features + 
+                   self.n_components * n_features * (n_features + 1) / 2 +
+                   self.n_components - 1)
+        
+        # Final log likelihood
+        final_log_likelihood = self.log_likelihood_history[-1]
+        
+        # BIC formula
+        bic = n_params * np.log(n_samples) - 2 * final_log_likelihood
+        
+        return bic
+
+# Utility functions
+def generate_gmm_data(n_samples=300, random_state=42):
+    """
+    Generate sample data from a Gaussian Mixture Model
+    
+    Returns:
+    - X: Generated data points
+    - true_labels: True cluster assignments
+    """
+    np.random.seed(random_state)
+    
+    # Define true parameters for 3 Gaussians
+    true_means = np.array([
+        [2, 2],    # Cluster 1 mean
+        [8, 3],    # Cluster 2 mean
+        [5, 8]     # Cluster 3 mean
+    ])
+    
+    true_covariances = np.array([
+        [[1, 0.5], [0.5, 1]],    # Cluster 1 covariance
+        [[1, -0.3], [-0.3, 1]],  # Cluster 2 covariance
+        [[1, 0], [0, 1]]         # Cluster 3 covariance
+    ])
+    
+    true_weights = np.array([0.3, 0.4, 0.3])  # Mixing proportions
+    
+    # Generate data
+    n_components = len(true_weights)
+    n_samples_per_component = np.random.multinomial(n_samples, true_weights)
+    
+    X = []
+    true_labels = []
+    
+    for k in range(n_components):
+        n_k = n_samples_per_component[k]
+        component_data = np.random.multivariate_normal(
+            true_means[k], 
+            true_covariances[k], 
+            n_k
+        )
+        X.append(component_data)
+        true_labels.extend([k] * n_k)
+    
+    X = np.vstack(X)
+    true_labels = np.array(true_labels)
+    
+    # Shuffle the data
+    indices = np.arange(n_samples)
+    np.random.shuffle(indices)
+    
+    return X[indices], true_labels[indices]
+
+def print_cluster_statistics(X, labels, responsibilities, n_components):
+    """
+    Print cluster statistics and visualization in text format
+    """
+    print("\n" + "=" * 60)
+    print("CLUSTER STATISTICS")
+    print("=" * 60)
+    
+    for k in range(n_components):
+        cluster_points = X[labels == k]
+        cluster_size = len(cluster_points)
+        
+        if cluster_size > 0:
+            mean_point = np.mean(cluster_points, axis=0)
+            print(f"\nCluster {k}:")
+            print(f"  Size: {cluster_size} points ({cluster_size/len(X)*100:.1f}%)")
+            print(f"  Mean: [{mean_point[0]:.3f}, {mean_point[1]:.3f}]")
+            
+            # Show uncertainty (average responsibility)
+            avg_responsibility = np.mean(responsibilities[labels == k, k])
+            print(f"  Avg. Certainty: {avg_responsibility*100:.1f}%")
+            
+            # Show sample points
+            if cluster_size <= 5:
+                print(f"  Sample Points:")
+                for i, point in enumerate(cluster_points[:3]):
+                    print(f"    Point {i}: [{point[0]:.2f}, {point[1]:.2f}]")
+        else:
+            print(f"\nCluster {k}: Empty cluster")
+
+def print_em_algorithm_explanation():
+    """
+    Print explanation of EM algorithm steps
+    """
+    print("\n" + "=" * 70)
+    print("EXPECTATION-MAXIMIZATION ALGORITHM EXPLANATION")
+    print("=" * 70)
+    
+    print("\n1. INITIALIZATION:")
+    print("   • Randomly initialize cluster centers (means)")
+    print("   • Set covariance matrices to identity")
+    print("   • Set equal mixing weights")
+    
+    print("\n2. EXPECTATION STEP (E-STEP):")
+    print("   • Calculate 'responsibilities' (posterior probabilities)")
+    print("   • For each point, compute probability it belongs to each cluster")
+    print("   • Formula: γ(zₙₖ) = πₖ * N(xₙ|μₖ,Σₖ) / Σⱼ[πⱼ * N(xₙ|μⱼ,Σⱼ)]")
+    
+    print("\n3. MAXIMIZATION STEP (M-STEP):")
+    print("   • Update cluster parameters using current responsibilities")
+    print("   • New means: weighted average of points")
+    print("   • New covariances: weighted sample covariance")
+    print("   • New weights: fraction of points assigned to cluster")
+    
+    print("\n4. CONVERGENCE:")
+    print("   • Repeat E-step and M-step until log-likelihood stabilizes")
+    print("   • Log-likelihood should increase monotonically")
+    print("   • Stop when change < tolerance or max iterations reached")
+    
+    print("\n" + "-" * 70)
+    print("MATHEMATICAL FOUNDATION:")
+    print("-" * 70)
+    print("• Goal: Maximize log-likelihood: log p(X|π,μ,Σ)")
+    print("• Challenge: Contains latent variables (cluster assignments)")
+    print("• Solution: Use EM to iteratively improve lower bound")
+    print("• Guarantee: Log-likelihood never decreases")
+    
+    print("\n" + "=" * 70)
+
+def main():
+    """
+    Main function to demonstrate EM Algorithm
+    """
+    print("=" * 70)
+    print("EXPECTATION-MAXIMIZATION ALGORITHM IMPLEMENTATION")
+    print("=" * 70)
+    print("Gaussian Mixture Model Clustering\n")
+    
+    # Generate sample data
+    print("1. GENERATING SAMPLE DATA")
+    X, true_labels = generate_gmm_data(n_samples=300)
+    print(f"   Generated {X.shape[0]} data points with {X.shape[1]} features")
+    print(f"   True clusters: 3 Gaussian distributions")
+    
+    # Initialize and fit GMM
+    print("\n2. INITIALIZING GAUSSIAN MIXTURE MODEL")
+    gmm = GaussianMixtureModel(
+        n_components=3,
+        max_iter=100,
+        tol=1e-4,
+        random_state=42
+    )
+    
+    # Fit the model
+    gmm.fit(X)
+    
+    # Make predictions
+    predicted_labels = gmm.predict(X)
+    responsibilities = gmm.predict_proba(X)
+    
+    # Get learned parameters
+    means, covariances, weights = gmm.get_parameters()
+    
+    # Print results
+    print("\n3. LEARNED PARAMETERS")
+    print("-" * 50)
+    
+    for k in range(gmm.n_components):
+        print(f"\nComponent {k}:")
+        print(f"  Weight (π): {weights[k]:.4f}")
+        print(f"  Mean (μ): [{means[k][0]:.4f}, {means[k][1]:.4f}]")
+        print(f"  Covariance (Σ):")
+        print(f"    [{covariances[k][0][0]:.4f}, {covariances[k][0][1]:.4f}]")
+        print(f"    [{covariances[k][1][0]:.4f}, {covariances[k][1][1]:.4f}]")
+    
+    # Print cluster statistics
+    print_cluster_statistics(X, predicted_labels, responsibilities, gmm.n_components)
+    
+    # Calculate and print evaluation metrics
+    print("\n4. MODEL EVALUATION")
+    print("-" * 50)
+    
+    # Calculate accuracy (with label permutation for best match)
+    from itertools import permutations
+    
+    best_accuracy = 0
+    for perm in permutations(range(gmm.n_components)):
+        permuted_labels = np.array([perm[label] for label in predicted_labels])
+        accuracy = np.mean(permuted_labels == true_labels)
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+    
+    print(f"   Clustering Accuracy: {best_accuracy*100:.2f}%")
+    
+    # Calculate BIC
+    bic = gmm.get_bic(X)
+    print(f"   Bayesian Information Criterion (BIC): {bic:.2f}")
+    print("   (Lower BIC indicates better model fit considering complexity)")
+    
+    # Log-likelihood analysis
+    print(f"\n   Initial Log-Likelihood: {gmm.log_likelihood_history[0]:.4f}")
+    print(f"   Final Log-Likelihood: {gmm.log_likelihood_history[-1]:.4f}")
+    print(f"   Improvement: {gmm.log_likelihood_history[-1] - gmm.log_likelihood_history[0]:.4f}")
+    
+    # Print algorithm explanation
+    print_em_algorithm_explanation()
+    
+    # Demonstrate soft clustering
+    print("\n5. SOFT CLUSTERING EXAMPLE")
+    print("-" * 50)
+    print("   Sample points with their cluster responsibilities:")
+    
+    # Show a few points with their probabilities
+    sample_indices = np.random.choice(len(X), 5, replace=False)
+    
+    for idx in sample_indices:
+        point = X[idx]
+        probs = responsibilities[idx]
+        true_label = true_labels[idx]
+        pred_label = predicted_labels[idx]
+        
+        print(f"\n   Point [{point[0]:.2f}, {point[1]:.2f}]:")
+        print(f"     True Cluster: {true_label}")
+        print(f"     Predicted Cluster: {pred_label}")
+        print(f"     Probabilities: ", end="")
+        for k in range(gmm.n_components):
+            print(f"C{k}: {probs[k]:.3f}  ", end="")
+        print()
+    
+    # Applications section
+    print("\n" + "=" * 70)
+    print("APPLICATIONS OF EM ALGORITHM")
+    print("=" * 70)
+    
+    print("\n1. CLUSTERING:")
+    print("   • Customer segmentation")
+    print("   • Image segmentation")
+    print("   • Anomaly detection")
+    
+    print("\n2. MISSING DATA IMPUTATION:")
+    print("   • Fill in missing values")
+    print("   • Handle incomplete datasets")
+    
+    print("\n3. DIMENSIONALITY REDUCTION:")
+    print("   • Probabilistic PCA")
+    print("   • Factor analysis")
+    
+    print("\n4. LATENT VARIABLE MODELS:")
+    print("   • Hidden Markov Models")
+    print("   • Topic modeling (LDA)")
+    
+    print("\n" + "=" * 70)
+    print("KEY ADVANTAGES OF EM ALGORITHM")
+    print("=" * 70)
+    
+    print("\n✓ HANDLES UNCERTAINTY: Provides probabilistic assignments")
+    print("✓ FLEXIBLE: Can model complex distributions")
+    print("✓ THEORETICAL GUARANTEES: Monotonic likelihood improvement")
+    print("✓ SOFT CLUSTERING: Points can belong to multiple clusters")
+    print("✓ HANDLES INCOMPLETE DATA: Can work with missing values")
+    
+    print("\nLIMITATIONS:")
+    print("✗ Sensitive to initialization")
+    print("✗ Can converge to local maxima")
+    print("✗ Requires specifying number of components")
+    print("✗ Computationally intensive for large datasets")
+    
+    print("\n" + "=" * 70)
+    print("PROGRAM COMPLETED SUCCESSFULLY!")
+    print("=" * 70)
+
+# Run the program
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        print("\nThis program requires numpy to run.")
+        print("Most online compilers support numpy.")
+        print("\nTry these online compilers:")
+        print("1. Google Colab: https://colab.research.google.com")
+        print("2. Replit: https://replit.com")
+        print("3. PythonAnywhere: https://www.pythonanywhere.com")
